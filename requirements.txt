@@ -2,5 +2,6 @@
 # Python 3.10 固定（hyperliquid-python-sdk の制約）
 numpy>=1.26
 polars>=1.0                # PC側 特徴量バルク計算（features）
+torch>=2.2                 # 学習（dataset/transformer/train）。学習PCはCUDA版を導入すること
 asyncpg>=0.29              # TimescaleDB 非同期ドライバ（ingestion）
 hyperliquid-python-sdk>=0.9  # WebSocket 購読（ingestion）
