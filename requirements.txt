@@ -1,5 +1,6 @@
 # Aevum ランタイム依存（モジュール追加に応じて拡張する）
 # Python 3.10 固定（hyperliquid-python-sdk の制約）
 numpy>=1.26
+polars>=1.0                # PC側 特徴量バルク計算（features）
 asyncpg>=0.29              # TimescaleDB 非同期ドライバ（ingestion）
 hyperliquid-python-sdk>=0.9  # WebSocket 購読（ingestion）
