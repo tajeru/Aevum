@@ -1,0 +1,3 @@
+# Aevum ランタイム依存（モジュール追加に応じて拡張する）
+# Python 3.10 固定（hyperliquid-python-sdk の制約）
+numpy>=1.26
