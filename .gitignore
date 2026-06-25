@@ -1,0 +1,45 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# --- Testing / type-check / lint caches ---
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Data & model artifacts (do NOT commit large/sensitive output) ---
+# NOTE: data/ is also a source package; only ignore generated artifacts, not *.py
+data/**/*.parquet
+data/**/*.csv
+data/**/*.feather
+*.onnx
+*.pt
+*.pth
+*.ckpt
+
+# --- Secrets / local config ---
+.env
+.env.*
+*.key
+secrets.*
+
+# --- Local DB files ---
+*.sqlite
+*.db
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
