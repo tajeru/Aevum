@@ -200,19 +200,23 @@ SELECT create_hypertable('positions', 'time',
 
 
 -- =====================================================================
--- 任意: 圧縮ポリシー（本番で有効化）
+-- 圧縮ポリシー（HDD 保存のため早期有効化）
 -- =====================================================================
--- 高頻度テーブルはストレージ削減のため圧縮を推奨（TimescaleDB Community）。
--- 適用には専用の DDL が要るため、運用時に下記を有効化する:
---
--- ALTER TABLE orderbook_snapshots SET (
---     timescaledb.compress,
---     timescaledb.compress_segmentby = 'symbol',
---     timescaledb.compress_orderby   = 'time DESC');
--- SELECT add_compression_policy('orderbook_snapshots', INTERVAL '7 days');
---
--- ALTER TABLE bar_features SET (
---     timescaledb.compress,
---     timescaledb.compress_segmentby = 'symbol',
---     timescaledb.compress_orderby   = 'time DESC');
--- SELECT add_compression_policy('bar_features', INTERVAL '30 days');
+-- 高頻度テーブルはストレージ削減のため圧縮（TimescaleDB Community）。
+-- segmentby=symbol で銘柄ごとに、orderby=time DESC で時系列順に圧縮。
+-- 圧縮対象は「閾値より古い」チャンクのみ。bar_features の cross_* 2パス UPDATE は
+-- 投入直後（30日より新しい）に行うため、圧縮済みチャンクへの UPDATE は発生しない。
+
+-- 板（最大容量）: 7日より古いチャンクを圧縮
+ALTER TABLE orderbook_snapshots SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'symbol',
+    timescaledb.compress_orderby   = 'time DESC');
+SELECT add_compression_policy('orderbook_snapshots', INTERVAL '7 days');
+
+-- 特徴量: 30日より古いチャンクを圧縮（2パス UPDATE 完了後）
+ALTER TABLE bar_features SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'symbol',
+    timescaledb.compress_orderby   = 'time DESC');
+SELECT add_compression_policy('bar_features', INTERVAL '30 days');
