@@ -1,9 +1,9 @@
 /**
- * App.tsx — ダッシュボード合成（terminal表示・ダミーデータ）。
+ * App.tsx — ダッシュボード合成（ダミーデータ・2テーマ切替対応）。
  *
- * 実装順 #3〜#4: Header / MetricCards / PriceChart / SignalPanel をダミーで通す。
- * PositionsTable(#5) / ThemeToggle(#6) / useLiveState(#7) は後続。
- * 状態は今は DUMMY_STATE。#7 で WebSocket+REST 出力に差し替える（型は types.ts で同一）。
+ * 実装順 #3〜#6 済み: Header(+ThemeToggle) / MetricCards / PriceChart / SignalPanel /
+ * PositionsTable。残り #7: useLiveState（WebSocket+REST GET）。
+ * 状態は今は DUMMY_STATE。#7 で実データに差し替える（型は types.ts で同一）。
  */
 import Header from "./components/Header";
 import MetricCards from "./components/MetricCards";

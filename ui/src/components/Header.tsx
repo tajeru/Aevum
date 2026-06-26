@@ -1,11 +1,10 @@
 /**
- * Header.tsx — ブランド・ライブ時刻・latency・equity・（後で）ThemeToggle。
+ * Header.tsx — ブランド・ライブ時刻・latency・equity・ThemeToggle。
  *
  * 表示のみ。色は var(--ax-*)、ブランドは見出しフォント（var(--ax-font-display)）。
- * ThemeToggle は実装順 #6 で右端スロットに差し込む（今はテーマ名チップを仮置き）。
  */
 import { useEffect, useState } from "react";
-import { useTheme } from "../theme/ThemeProvider";
+import ThemeToggle from "../theme/ThemeToggle";
 import { clockFromDate, signedUsd, usd } from "../format";
 
 /** 1 秒ごとに更新するローカル時計。 */
@@ -44,7 +43,6 @@ export interface HeaderProps {
 }
 
 export default function Header({ connected, latencyMs, equity, openPnl }: HeaderProps) {
-  const { name } = useTheme();
   const now = useNow();
   const dotColor = connected ? "var(--ax-positive)" : "var(--ax-negative)";
 
@@ -101,20 +99,7 @@ export default function Header({ connected, latencyMs, equity, openPnl }: Header
           </span>
         </Stat>
 
-        {/* 実装順 #6 で ThemeToggle に置換するスロット */}
-        <span
-          style={{
-            fontSize: 11,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-            color: "var(--ax-accent)",
-            border: "1px solid var(--ax-border)",
-            borderRadius: 6,
-            padding: "5px 10px",
-          }}
-        >
-          {name}
-        </span>
+        <ThemeToggle />
       </div>
     </header>
   );
