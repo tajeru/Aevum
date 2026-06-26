@@ -83,6 +83,7 @@ export const DUMMY_STATE: DashboardState = {
     { name: "spread_bps", value: 1.8 },
     { name: "funding_rate", value: 0.00012 },
   ],
+  // PositionView: 生の positions 行 + 表示付帯（slLevel / barsHeld / horizon）。
   positions: [
     {
       symbol: "BTC",
@@ -95,6 +96,9 @@ export const DUMMY_STATE: DashboardState = {
       leverage: 3.0,
       liquidation_px: 48230.0,
       margin_used: 3210.5,
+      slLevel: 63200.0, // chart.barriers.stopLoss と一致
+      barsHeld: 6, // 09:12 -> 09:40 は 5m × ~6 本
+      horizon: 48,
     },
     {
       symbol: "ETH",
@@ -107,6 +111,9 @@ export const DUMMY_STATE: DashboardState = {
       leverage: 2.0,
       liquidation_px: 4120.0,
       margin_used: 2038.8,
+      slLevel: 3510.0, // ショートなので SL は建値の上
+      barsHeld: 9,
+      horizon: 48,
     },
   ],
 };

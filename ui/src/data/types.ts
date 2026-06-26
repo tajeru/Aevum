@@ -36,6 +36,19 @@ export interface Position {
   margin_used: number | null;
 }
 
+/**
+ * PositionsTable 表示用の行 = 生の Position + 表示専用の付帯情報。
+ * 生の positions 行に無い列をデータ層（#7 では useLiveState）が結合して供給する:
+ *   - slLevel: 損切バリア（execution.py のブラケット由来。positions には無い）
+ *   - barsHeld / horizon: 縦バリアまでの保有経過（Triple-Barrier の time-stop 進捗）
+ * UI では再計算しない（経過バーや SL を UI 内で導出しない）。
+ */
+export interface PositionView extends Position {
+  slLevel: number | null;
+  barsHeld: number; // エントリー以降の経過バー数
+  horizon: number; // 縦バリア（=48）
+}
+
 /** ライブ特徴量の 1 項目（bar_features の列名と値）。SignalPanel 表示用。 */
 export interface LiveFeature {
   name: string; // shared/feature_names.py の名称
@@ -99,7 +112,7 @@ export interface DashboardState {
   prediction: Prediction; // 主表示銘柄の最新予測（SignalPanel）
   probThreshold: number; // execution.py ExecConfig.prob_threshold（表示用）
   features: LiveFeature[];
-  positions: Position[];
+  positions: PositionView[];
 }
 
 /** signal(-1/0/1) -> 表示方向。 */
@@ -108,5 +121,14 @@ export type Direction = "LONG" | "FLAT" | "SHORT";
 export function directionOf(signal: number | null): Direction {
   if (signal === 1) return "LONG";
   if (signal === -1) return "SHORT";
+  return "FLAT";
+}
+
+/** 建玉サイズの符号 -> 売買方向（純粋な表示派生）。 */
+export type Side = "LONG" | "SHORT" | "FLAT";
+
+export function sideOf(size: number): Side {
+  if (size > 0) return "LONG";
+  if (size < 0) return "SHORT";
   return "FLAT";
 }

@@ -9,6 +9,7 @@ import Header from "./components/Header";
 import MetricCards from "./components/MetricCards";
 import PriceChart from "./components/PriceChart";
 import SignalPanel from "./components/SignalPanel";
+import PositionsTable from "./components/PositionsTable";
 import { DUMMY_STATE } from "./data/dummy";
 
 export default function App() {
@@ -43,6 +44,8 @@ export default function App() {
           features={state.features}
         />
       </div>
+
+      <PositionsTable positions={state.positions} />
     </div>
   );
 }
