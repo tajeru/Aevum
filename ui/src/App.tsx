@@ -1,37 +1,31 @@
-import { useTheme } from "./theme/ThemeProvider";
-
 /**
- * 最小スキャフォールド（terminal テーマ）。
- * テーマ系（themes.ts + ThemeProvider）が CSS 変数を適用できることを示す土台。
- * Header / MetricCards / PriceChart / SignalPanel / PositionsTable は後続で追加する。
+ * App.tsx — ダッシュボード合成（terminal表示・ダミーデータ）。
+ *
+ * 実装順 #3: Header / MetricCards / SignalPanel をダミーで通す。
+ * PriceChart(#4) / PositionsTable(#5) / ThemeToggle(#6) / useLiveState(#7) は後続。
+ * 状態は今は DUMMY_STATE。#7 で WebSocket+REST 出力に差し替える（型は types.ts で同一）。
  */
-export default function App() {
-  const { name } = useTheme();
-  return (
-    <div style={{ minHeight: "100vh", padding: 24 }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          borderBottom: "1px solid var(--ax-border)",
-          paddingBottom: 12,
-          marginBottom: 24,
-        }}
-      >
-        <h1 className="ax-display" style={{ margin: 0, fontSize: 22, letterSpacing: 1 }}>
-          Aevum
-        </h1>
-        <span style={{ color: "var(--ax-text-secondary)", fontSize: 13 }}>
-          theme: <span style={{ color: "var(--ax-accent)" }}>{name}</span>
-        </span>
-      </header>
+import Header from "./components/Header";
+import MetricCards from "./components/MetricCards";
+import SignalPanel from "./components/SignalPanel";
+import { DUMMY_STATE } from "./data/dummy";
 
-      <div className="ax-panel" style={{ padding: 20 }}>
-        <p style={{ margin: 0, color: "var(--ax-text-secondary)" }}>
-          monitoring dashboard scaffold — theme system ready (read-only).
-        </p>
-      </div>
+export default function App() {
+  const state = DUMMY_STATE;
+  return (
+    <div style={{ minHeight: "100vh", maxWidth: 1180, margin: "0 auto", padding: "0 24px 32px" }}>
+      <Header
+        connected={state.connected}
+        latencyMs={state.latencyMs}
+        equity={state.metrics.equity}
+        openPnl={state.metrics.openPnl}
+      />
+      <MetricCards metrics={state.metrics} />
+      <SignalPanel
+        prediction={state.prediction}
+        probThreshold={state.probThreshold}
+        features={state.features}
+      />
     </div>
   );
 }
