@@ -139,8 +139,8 @@ def compute_bar_features(bars: pl.DataFrame) -> pl.DataFrame:
 # --------------------------------------------------------------------------- #
 # 板（orderbook）由来の特徴量
 # --------------------------------------------------------------------------- #
-def _book_empty() -> pl.DataFrame:
-    schema = {"time": pl.Datetime(time_zone="UTC")}
+def _book_empty(time_dtype: pl.DataType = pl.Datetime(time_unit="us", time_zone="UTC")) -> pl.DataFrame:
+    schema = {"time": time_dtype}
     schema.update({c: pl.Float64 for c in _BOOK_OUT_COLS})
     return pl.DataFrame(schema=schema)
 
@@ -288,7 +288,8 @@ def compute_cross_features(self_ret: pl.DataFrame, other_ret: pl.DataFrame) -> p
 # --------------------------------------------------------------------------- #
 def _assemble_symbol(symbol: str, bars: pl.DataFrame, book: pl.DataFrame, funding: pl.DataFrame) -> pl.DataFrame:
     barf = compute_bar_features(bars)
-    bookf = compute_book_features(book)
+    # 空の板は bars の time 型に合わせる（naive/aware の join 不一致を防ぐ）
+    bookf = compute_book_features(book) if book.height else _book_empty(barf.schema["time"])
     fund = compute_funding_features(barf.select("time"), funding)
     out = barf.join(bookf, on="time", how="left").join(fund, on="time", how="left")
     return out.with_columns(pl.lit(symbol).alias("symbol"))
