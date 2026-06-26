@@ -3,5 +3,8 @@
 numpy>=1.26
 polars>=1.0                # PC側 特徴量バルク計算（features）
 torch>=2.2                 # 学習（dataset/transformer/train）。学習PCはCUDA版を導入すること
+onnx>=1.16                 # ONNX エクスポート（train）
+onnxscript>=0.1            # torch>=2.x の ONNX エクスポータが要求
+onnxruntime>=1.17          # 推論（Pi は ARM 最適化版を導入すること）
 asyncpg>=0.29              # TimescaleDB 非同期ドライバ（ingestion）
 hyperliquid-python-sdk>=0.9  # WebSocket 購読（ingestion）
