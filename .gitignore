@@ -39,6 +39,13 @@ secrets.*
 *.sqlite
 *.db
 
+# --- Node / UI (ui/) ---
+node_modules/
+ui/dist/
+ui/.vite/
+*.tsbuildinfo
+npm-debug.log*
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db

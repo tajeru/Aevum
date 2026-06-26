@@ -1,0 +1,36 @@
+/* ベーススタイル。色・フォントは必ず var(--ax-*)（themes.ts 由来）を参照する。 */
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--ax-bg);
+  color: var(--ax-text-primary);
+  font-family: var(--ax-font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+.ax-display {
+  font-family: var(--ax-font-display);
+  color: var(--ax-text-primary);
+}
+
+.ax-panel {
+  background: var(--ax-panel);
+  border: 1px solid var(--ax-border);
+  border-radius: 8px;
+}
