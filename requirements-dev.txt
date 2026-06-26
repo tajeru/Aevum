@@ -2,3 +2,4 @@
 -r requirements.txt
 pandas>=2.0   # σ 単体テストの参照実装（AFML / pandas ewm 一致確認）
 pytest>=7.0
+httpx>=0.27   # FastAPI TestClient（server テスト）

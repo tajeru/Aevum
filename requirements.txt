@@ -8,3 +8,5 @@ onnxscript>=0.1            # torch>=2.x の ONNX エクスポータが要求
 onnxruntime>=1.17          # 推論（Pi は ARM 最適化版を導入すること）
 asyncpg>=0.29              # TimescaleDB 非同期ドライバ（ingestion）
 hyperliquid-python-sdk>=0.9  # WebSocket 購読（ingestion）
+fastapi>=0.110             # 状態配信API（server）
+uvicorn>=0.29             # ASGI サーバ（server）
