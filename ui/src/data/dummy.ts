@@ -7,7 +7,45 @@
  * σ は per-bar → ×√48 → scaled をデータ側の値として持つ（UI は再計算しない）。
  * 仕様の例に合わせ perBar 0.0041 / horizon 48 / scaled 0.0284 を採用。
  */
-import type { DashboardState } from "./types";
+import type { Candle, DashboardState } from "./types";
+
+/**
+ * 決定論的なダミーローソク足を生成（seed 固定の線形合同法）。
+ * Math.random を使わないのは、再訪/HMR で表示が暴れないようにするため。
+ * これは「バックエンドが返す ohlcv_bars」の代用で、UI 側の計算ロジックではない。
+ */
+function makeCandles(count: number, endEpochSec: number, stepSec: number, start: number): Candle[] {
+  let seed = 0x9e3779b1; // 固定 seed
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff; // 0..1
+  };
+  const out: Candle[] = [];
+  let close = start;
+  const startTime = endEpochSec - (count - 1) * stepSec;
+  for (let i = 0; i < count; i++) {
+    const drift = Math.sin(i / 9) * 0.0008; // 緩い波
+    const shock = (rnd() - 0.5) * 0.006; // ±0.3% 程度
+    const open = close;
+    close = open * (1 + drift + shock);
+    const hi = Math.max(open, close) * (1 + rnd() * 0.0025);
+    const lo = Math.min(open, close) * (1 - rnd() * 0.0025);
+    out.push({
+      time: startTime + i * stepSec,
+      open: round1(open),
+      high: round1(hi),
+      low: round1(lo),
+      close: round1(close),
+    });
+  }
+  return out;
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+// 2026-06-26T09:40:00Z を末尾バーに固定（dummy なので決め打ち）。
+const END_EPOCH = Math.floor(Date.parse("2026-06-26T09:40:00Z") / 1000);
+const DUMMY_CANDLES = makeCandles(120, END_EPOCH, 300, 64000);
 
 export const DUMMY_STATE: DashboardState = {
   connected: true,
@@ -18,6 +56,12 @@ export const DUMMY_STATE: DashboardState = {
     openPnl: 127.44,
     winRate: 0.541,
     sigma: { perBar: 0.0041, horizon: 48, scaled: 0.0284 },
+  },
+  chart: {
+    symbol: "BTC",
+    candles: DUMMY_CANDLES,
+    // entry は建玉の建値に一致。TP/SL は execution.py のブラケットを模した固定値。
+    barriers: { entry: 64210.0, takeProfit: 65800.0, stopLoss: 63200.0 },
   },
   prediction: {
     symbol: "BTC",

@@ -43,6 +43,35 @@ export interface LiveFeature {
 }
 
 /**
+ * ローソク足 1 本。time は UTC エポック秒（lightweight-charts の UTCTimestamp 相当）。
+ * バックエンドが ohlcv_bars 由来でこの形を返す想定。UI 側では値を加工しない。
+ */
+export interface Candle {
+  time: number; // epoch seconds (UTC)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+/**
+ * チャートに重ねる Triple-Barrier の水準（建玉のブラケット）。
+ * UI では再計算しない: entry/TP/SL は execution.py/labels.py 由来の値をそのまま受け取る。
+ */
+export interface Barriers {
+  entry: number | null; // 建値
+  takeProfit: number | null; // 上側バリア（指値・maker）
+  stopLoss: number | null; // 下側バリア（成行トリガ）
+}
+
+/** PriceChart の表示ペイロード（主表示銘柄）。 */
+export interface ChartData {
+  symbol: string;
+  candles: Candle[];
+  barriers: Barriers;
+}
+
+/**
  * σ 表示用。per-bar と horizon スケール後をどちらもデータ側が供給する。
  * UI は perBar → ×√horizon → scaled を「表示」するだけ（Math.sqrt しない）。
  */
@@ -66,6 +95,7 @@ export interface DashboardState {
   latencyMs: number | null;
   updatedAt: string; // ISO8601
   metrics: Metrics;
+  chart: ChartData; // 主表示銘柄のローソク足 + バリア（PriceChart）
   prediction: Prediction; // 主表示銘柄の最新予測（SignalPanel）
   probThreshold: number; // execution.py ExecConfig.prob_threshold（表示用）
   features: LiveFeature[];
