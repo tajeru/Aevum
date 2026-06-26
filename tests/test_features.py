@@ -19,6 +19,7 @@ import pytest
 
 from data.features import (
     BAR_FEATURES_INSERT_SQL,
+    WARMUP_BARS,
     compute_bar_features,
     compute_book_features,
     compute_cross_features,
@@ -150,6 +151,39 @@ def test_cross_corr_self_is_one():
 # --------------------------------------------------------------------------- #
 # INSERT 文
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# バルク == 逐次（ローリング窓）一致：train/live 整合性の核心
+# --------------------------------------------------------------------------- #
+def test_bar_features_bulk_equals_incremental():
+    # 長い系列のバルク計算と、末尾 WARMUP_BARS+K バーだけのローリング窓計算で、
+    # 末尾 K 行が一致する（履歴依存の sigma_ewma/Wilder TA/ret_240 を含む）。
+    K = 128
+    full = _bars(n=2500, seed=3)
+    bulk = compute_bar_features(full)
+    feat_cols = [c for c in bulk.columns if c != "time"]
+    tail = full.tail(WARMUP_BARS + K)
+    inc = compute_bar_features(tail)
+    np.testing.assert_allclose(
+        inc.select(feat_cols).to_numpy()[-K:],
+        bulk.select(feat_cols).to_numpy()[-K:],
+        rtol=1e-6, atol=1e-7, equal_nan=True,
+    )
+
+
+def test_compute_features_bulk_equals_incremental():
+    # 全パイプライン（2銘柄・cross 含む）でも末尾 K 行がバルクと一致。
+    K = 128
+    bars = {"BTC": _bars(n=2500, seed=0), "ETH": _bars(n=2500, seed=1)}
+    bulk = compute_features(bars)["BTC"]
+    tail_bars = {s: df.tail(WARMUP_BARS + K) for s, df in bars.items()}
+    inc = compute_features(tail_bars)["BTC"]
+    np.testing.assert_allclose(
+        inc.select(FEATURE_NAMES).to_numpy()[-K:],
+        bulk.select(FEATURE_NAMES).to_numpy()[-K:],
+        rtol=1e-6, atol=1e-7, equal_nan=True,
+    )
+
+
 def test_insert_sql_arity():
     nph = max(int(m) for m in re.findall(r"\$(\d+)", BAR_FEATURES_INSERT_SQL))
     assert nph == 2 + len(FEATURE_NAMES) == 60

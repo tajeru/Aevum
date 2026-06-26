@@ -34,6 +34,12 @@ RET_HORIZONS = (1, 5, 15, 30, 60, 240)
 _TWO_PI = 2.0 * math.pi
 _LN2 = math.log(2.0)
 
+# ライブ（ローリング窓）で compute_* の末尾行をバルク計算と一致させるのに必要な履歴長。
+# 履歴依存（sigma_ewma の EWMA span=100, Wilder 系 TA, ret_240）が支配的。
+# 実測: tail 700 で末尾行が rel~1e-9、900 で機械精度。安全側に 1000 とする。
+# ライブの最小バッファ = WARMUP_BARS + seq_len（末尾 seq_len 行すべてを一致させるため）。
+WARMUP_BARS = 1000
+
 # 板集約後の特徴量（時刻列含まず）
 _BOOK_STATE_COLS = [
     "obi_l1", "obi_l5", "obi_l10", "bid_depth_5_log", "ask_depth_5_log",
