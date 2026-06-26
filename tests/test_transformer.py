@@ -71,7 +71,7 @@ def test_onnx_export_runs(tmp_path):
         m, dummy, str(path),
         input_names=["x"], output_names=["logits"],
         dynamic_axes={"x": {0: "batch"}, "logits": {0: "batch"}},
-        opset_version=17,
+        opset_version=17, dynamo=False,
     )
     assert path.is_file() and path.stat().st_size > 0
 
@@ -81,16 +81,17 @@ def test_onnx_runtime_parity(tmp_path):
     import numpy as np
 
     m = _model().eval()
-    dummy = torch.randn(2, 128, N_FEATURES)
-    with torch.no_grad():
-        ref = m(dummy).numpy()
+    # batch=1 でエクスポートし batch=3 で実行（動的バッチを検証）
     path = tmp_path / "model.onnx"
     torch.onnx.export(
-        m, dummy, str(path),
+        m, torch.randn(1, 128, N_FEATURES), str(path),
         input_names=["x"], output_names=["logits"],
         dynamic_axes={"x": {0: "batch"}, "logits": {0: "batch"}},
-        opset_version=17,
+        opset_version=17, dynamo=False,
     )
+    x = torch.randn(3, 128, N_FEATURES)
+    with torch.no_grad():
+        ref = m(x).numpy()
     sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-    got = sess.run(["logits"], {"x": dummy.numpy()})[0]
+    got = sess.run(["logits"], {"x": x.numpy()})[0]
     np.testing.assert_allclose(got, ref, rtol=1e-3, atol=1e-4)
