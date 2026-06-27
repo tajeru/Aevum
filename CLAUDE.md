@@ -205,6 +205,37 @@ Hyperliquid WebSocket
 
 ---
 
+## ローカル開発スタック（dev runbook）
+
+ローカルで E2E を回す手順。Pi 本番ではなく開発機（Windows / .venv）想定。
+
+- **DB**: `docker compose up -d`（TimescaleDB pg16）。DSN は環境変数
+  `AEVUM_DB_DSN=postgresql://postgres:aevum@localhost:5432/aevum`。破棄は `docker compose down -v`。
+- **Python**: `./.venv/Scripts/python.exe`（**3.10 固定**。既定の 3.12 を使わない）。
+- **Windows コンソール**: cp932。スクリプト実行時は `PYTHONIOENCODING=utf-8`、print は ASCII 推奨（σ/µ/→ で落ちる）。
+- スキーマ適用: `python scripts/apply_schema.py` ／ 静的 seed: `python scripts/seed_dev.py`
+- candle 履歴 backfill（冪等・REST candleSnapshot。**穴埋めはこれ**）: `python scripts/backfill_candles.py --days N`
+- ライブ収集（常駐・死活監視+自動再接続）: `python -m data.ingestion`
+- 特徴量生成（features.py 無改修ランナー）: `python scripts/run_features.py`（`--no-store` で計算のみ）
+- DB 確認: `python check_db.py`
+- API: `uvicorn api.server:app`（read-only）／ UI: `cd ui && npm run dev`（vite proxy `/api`→8000, `/ws`→8000）
+- テスト: `./.venv/Scripts/python.exe -m pytest -q`
+- **注意**: セッションをまたぐと background プロセス（ingestion / uvicorn / vite）は全て停止する。再開時はこの runbook で起動し直す。
+
+---
+
+## 現状チェックポイント（最終更新 2026-06-27）
+
+- **E2E 段階3まで到達**。`ingestion → ohlcv/book/funding` と `features → bar_features` を**実データで配線・検証済み**。
+- features 核心検証は全 PASS: σ/TA の **train(bulk)↔live(rolling) 一致**、外部参照（pandas/polars）一致、Cross 2パス、Pi 計算時間に十分な余裕。
+- ingestion に**接続維持スーパーバイザ**を追加し、実地で `Expired` の自動再接続を確認済み（不変条件「ingestion の接続維持」参照）。
+- **未検証（残課題）**: features の **板/funding 特徴の rolling↔bulk 一致**（ライブ board/funding の蓄積待ち。ingestion 安定継続で解消可能）。
+- equity / winRate は当面 null 表示（永続化テーブル無し・winRate 定義未確定）。
+- **次の本流**: `labels`（実データ実行・現状 labels テーブルは空）→ `dataset` → `train` → `inference`(shadow) → `execution`。
+- 詳細な経緯は memory（`features-stage3-verified` / `ingestion-reconnect-gap` / `ui-live-wiring-gaps`）を参照。
+
+---
+
 ## Stop and Ask（実装を止めて質問する条件）
 
 以下に該当する場合は実装せず、必ず確認を求める:
