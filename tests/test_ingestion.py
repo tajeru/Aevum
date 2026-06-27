@@ -16,11 +16,18 @@ from data.ingestion import (
     INSERT_SQL,
     TABLES,
     BatchWriter,
+    ConnectionMonitor,
+    SupervisorConfig,
+    WsSupervisor,
+    _freshness_wrap,
+    _info_alive,
+    backoff_delay,
     make_callbacks,
     parse_active_ctx,
     parse_candle,
     parse_l2book,
     resolve_dsn,
+    should_reconnect,
 )
 
 # 2023-11-14T22:13:20Z
@@ -229,3 +236,177 @@ def test_callbacks_route_to_writer():
     assert INSERT_SQL["funding_oi"] in tables_written
     total = sum(len(rows) for _, rows in pool.calls)
     assert total == 3  # SOL は除外
+
+
+# --------------------------------------------------------------------------- #
+# 接続スーパーバイザ（接続維持のみ）
+# --------------------------------------------------------------------------- #
+def test_should_reconnect():
+    assert should_reconnect(alive=True, idle_seconds=10.0, stale_after=90.0) is False
+    assert should_reconnect(alive=False, idle_seconds=0.0, stale_after=90.0) is True   # 死活
+    assert should_reconnect(alive=True, idle_seconds=120.0, stale_after=90.0) is True  # 鮮度
+    assert should_reconnect(alive=True, idle_seconds=90.0, stale_after=90.0) is False  # 境界(超過のみ)
+
+
+def test_backoff_delay():
+    assert backoff_delay(1, 1.0, 2.0, 60.0) == 1.0
+    assert backoff_delay(2, 1.0, 2.0, 60.0) == 2.0
+    assert backoff_delay(3, 1.0, 2.0, 60.0) == 4.0
+    assert backoff_delay(10, 1.0, 2.0, 60.0) == 60.0  # 上限で頭打ち
+    assert backoff_delay(0, 1.0, 2.0, 60.0) == 1.0    # attempt<1 は 1 にクランプ
+
+
+def test_connection_monitor_idle():
+    clock = {"t": 100.0}
+    m = ConnectionMonitor(monotonic=lambda: clock["t"])
+    assert m.idle_seconds() == 0.0
+    clock["t"] = 130.0
+    assert m.idle_seconds() == 30.0
+    m.bump()
+    assert m.idle_seconds() == 0.0
+
+
+def test_freshness_wrap_bumps_and_calls():
+    clock = {"t": 0.0}
+    monitor = ConnectionMonitor(monotonic=lambda: clock["t"])
+    seen = []
+    wrapped = _freshness_wrap(lambda m: seen.append(m), monitor)
+    clock["t"] = 50.0
+    assert monitor.idle_seconds() == 50.0
+    wrapped("hello")                       # 受信 → bump + 内側呼び出し
+    assert seen == ["hello"]
+    assert monitor.idle_seconds() == 0.0   # 鮮度がリセットされる
+    clock["t"] = 51.0
+    assert monitor.idle_seconds() == 1.0
+
+
+class _FakeWsManager:
+    def __init__(self, alive=True):
+        self._alive = alive
+
+    def is_alive(self):
+        return self._alive
+
+    def stop(self):
+        self._alive = False
+
+
+class _FakeInfo:
+    """WsSupervisor 用の最小 Info 偽物（subscribe / disconnect / ws_manager）。"""
+
+    def __init__(self, alive=True):
+        self.ws_manager = _FakeWsManager(alive)
+        self.subscriptions: list = []
+        self.disconnected = False
+
+    def subscribe(self, sub, cb):
+        self.subscriptions.append((sub, cb))
+
+    def disconnect_websocket(self):
+        self.disconnected = True
+        self.ws_manager.stop()
+
+
+_NOOP_CB = {"candle": lambda m: None, "l2Book": lambda m: None, "activeAssetCtx": lambda m: None}
+
+
+def test_info_alive():
+    assert _info_alive(_FakeInfo(alive=True)) is True
+    assert _info_alive(_FakeInfo(alive=False)) is False
+    assert _info_alive(object()) is False  # ws_manager 属性なし → False
+
+
+def test_supervisor_reconnects_when_thread_dead():
+    async def run():
+        infos = [_FakeInfo(alive=False), _FakeInfo(alive=True)]
+        made: list = []
+
+        def make_info():
+            info = infos[len(made)]
+            made.append(info)
+            return info
+
+        monitor = ConnectionMonitor(monotonic=lambda: 100.0)  # 一定 → 常に鮮度OK（死活のみで判定）
+        calls = {"sleep": 0}
+        sup = WsSupervisor(
+            _NOOP_CB, monitor, SupervisorConfig(monitor_interval_seconds=0.0),
+            make_info=make_info, sleep=None,
+        )
+
+        async def fake_sleep(_):
+            calls["sleep"] += 1
+            if calls["sleep"] >= 2:
+                sup.stop()
+
+        sup._sleep = fake_sleep
+        await sup.run()
+        return made, infos
+
+    made, infos = asyncio.run(run())
+    assert len(made) == 2                       # 初回 + 再接続1回
+    assert infos[0].disconnected                # 死んだ接続は切断された
+    assert len(infos[1].subscriptions) == 6     # 2銘柄 × 3チャンネルを再購読
+
+
+def test_supervisor_reconnects_when_stale():
+    async def run():
+        t = {"now": 1000.0}
+        infos = [_FakeInfo(alive=True), _FakeInfo(alive=True)]
+        made: list = []
+
+        def make_info():
+            info = infos[len(made)]
+            made.append(info)
+            return info
+
+        monitor = ConnectionMonitor(monotonic=lambda: t["now"])
+        calls = {"sleep": 0}
+        sup = WsSupervisor(
+            _NOOP_CB, monitor,
+            SupervisorConfig(stale_after_seconds=90.0, monitor_interval_seconds=0.0),
+            make_info=make_info, sleep=None,
+        )
+
+        async def fake_sleep(_):
+            calls["sleep"] += 1
+            t["now"] += 100.0  # 無受信が stale_after=90 を超える
+            if calls["sleep"] >= 2:
+                sup.stop()
+
+        sup._sleep = fake_sleep
+        await sup.run()
+        return made, infos
+
+    made, infos = asyncio.run(run())
+    assert len(made) == 2          # 鮮度劣化で再接続
+    assert infos[0].disconnected
+
+
+def test_supervisor_no_reconnect_when_healthy():
+    async def run():
+        infos = [_FakeInfo(alive=True)]  # 2回目を作ろうとすれば IndexError で顕在化
+        made: list = []
+
+        def make_info():
+            info = infos[len(made)]
+            made.append(info)
+            return info
+
+        monitor = ConnectionMonitor(monotonic=lambda: 5.0)  # 一定 → 常に鮮度OK
+        calls = {"sleep": 0}
+        sup = WsSupervisor(
+            _NOOP_CB, monitor, SupervisorConfig(monitor_interval_seconds=0.0),
+            make_info=make_info, sleep=None,
+        )
+
+        async def fake_sleep(_):
+            calls["sleep"] += 1
+            if calls["sleep"] >= 3:
+                sup.stop()
+
+        sup._sleep = fake_sleep
+        await sup.run()
+        return made
+
+    made = asyncio.run(run())
+    assert len(made) == 1  # 初回接続のみ・再接続なし
