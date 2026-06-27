@@ -1,0 +1,30 @@
+# docker-compose.yml — ローカル e2e 用 TimescaleDB（段階1）。
+#
+# 使い方（Docker Desktop は WSL2 バックエンドで起動しておくこと）:
+#   docker compose up -d
+#   $env:AEVUM_DB_DSN = "postgresql://postgres:aevum@localhost:5432/aevum"
+#   .\.venv\Scripts\python.exe scripts/apply_schema.py   # 空DBへ schema_v1.sql
+#   .\.venv\Scripts\python.exe scripts/seed_dev.py       # 少量のテストデータ
+#   .\.venv\Scripts\python.exe -m uvicorn api.server:create_db_app --factory --port 8000
+#
+# クリーン破棄: docker compose down -v （ボリュームごと削除）
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16  # 再現性重視なら 2.x-pg16 の固定タグへ
+    container_name: aevum-timescaledb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: aevum
+      POSTGRES_DB: aevum
+    ports:
+      - "5432:5432"
+    volumes:
+      - aevum-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aevum"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  aevum-pgdata:

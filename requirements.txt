@@ -10,3 +10,4 @@ asyncpg>=0.29              # TimescaleDB 非同期ドライバ（ingestion）
 hyperliquid-python-sdk>=0.9  # WebSocket 購読（ingestion）
 fastapi>=0.110             # 状態配信API（server）
 uvicorn>=0.29             # ASGI サーバ（server）
+websockets>=12             # uvicorn の WebSocket 実装（server /ws のライブ配信に必須）
