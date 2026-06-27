@@ -52,9 +52,10 @@ export const DUMMY_STATE: DashboardState = {
   latencyMs: 12,
   updatedAt: "2026-06-26T09:41:07Z",
   metrics: {
-    equity: 10342.18,
+    // equity / winRate は当面 null（"—" 表示・枠は維持）。openPnl/σ は実値を持つ。
+    equity: null,
     openPnl: 127.44,
-    winRate: 0.541,
+    winRate: null,
     sigma: { perBar: 0.0041, horizon: 48, scaled: 0.0284 },
   },
   chart: {

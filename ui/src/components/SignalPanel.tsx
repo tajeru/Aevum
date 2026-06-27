@@ -81,23 +81,27 @@ function ProbRow({
 }
 
 export interface SignalPanelProps {
-  prediction: Prediction;
+  prediction: Prediction | null;
   probThreshold: number;
   features: LiveFeature[];
 }
 
 export default function SignalPanel({ prediction, probThreshold, features }: SignalPanelProps) {
-  const dir = directionOf(prediction.signal);
+  // 予測未着（接続前/データ無し）でも落ちない: 方向 FLAT・確率 0 で描画。
+  const dir = directionOf(prediction?.signal ?? 0);
+  const probDown = prediction?.prob_down ?? 0;
+  const probFlat = prediction?.prob_flat ?? 0;
+  const probUp = prediction?.prob_up ?? 0;
   return (
     <div className="ax-panel" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
       {/* 見出し: 銘柄 + 方向バッジ */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <span className="ax-display" style={{ fontSize: 16, color: "var(--ax-text-primary)" }}>
-            {prediction.symbol}
+            {prediction?.symbol ?? "—"}
           </span>
           <span style={{ fontSize: 11, color: "var(--ax-text-tertiary)" }}>
-            signal · {prediction.model_version}
+            signal · {prediction?.model_version ?? "—"}
           </span>
         </div>
         <span
@@ -117,9 +121,9 @@ export default function SignalPanel({ prediction, probThreshold, features }: Sig
 
       {/* 確率バー（閾値マーカー付き） */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <ProbRow label="down" value={prediction.prob_down} threshold={probThreshold} color="var(--ax-negative)" />
-        <ProbRow label="flat" value={prediction.prob_flat} threshold={probThreshold} color="var(--ax-text-secondary)" />
-        <ProbRow label="up" value={prediction.prob_up} threshold={probThreshold} color="var(--ax-positive)" />
+        <ProbRow label="down" value={probDown} threshold={probThreshold} color="var(--ax-negative)" />
+        <ProbRow label="flat" value={probFlat} threshold={probThreshold} color="var(--ax-text-secondary)" />
+        <ProbRow label="up" value={probUp} threshold={probThreshold} color="var(--ax-positive)" />
         <span style={{ fontSize: 10, color: "var(--ax-text-tertiary)" }}>
           threshold = {pct(probThreshold, 0)}
         </span>

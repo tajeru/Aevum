@@ -16,13 +16,15 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from shared.feature_names import SIGMA_FEATURE  # noqa: F401  (将来 σ 配信の参照用)
+from live.execution import ExecConfig  # prob_threshold / horizon の唯一ソース
+from shared import volatility  # σ スケールの唯一定義（scale_to_horizon）
+from shared.feature_names import SIGMA_FEATURE  # bar_features の σ 列名
 
 
 def _jsonable(row) -> dict:
@@ -36,6 +38,85 @@ def _jsonable(row) -> dict:
         else:
             out[k] = v
     return out
+
+
+# --------------------------------------------------------------------------- #
+# スナップショット組み立て（純粋関数・I/O なし）
+#   取得済みデータを UI の DashboardState 形へ整形するだけ。ロジックは持たない。
+# --------------------------------------------------------------------------- #
+PRIMARY_SYMBOL = "BTC"   # チャート/シグナルの主表示銘柄
+BAR_SECONDS = 300        # 5 分足（barsHeld 換算用）
+CANDLE_LIMIT = 200       # チャートへ返す直近バー数
+
+_EXEC = ExecConfig()                 # prob_threshold / horizon の唯一ソース
+HORIZON = _EXEC.horizon              # 縦バリア（= DEFAULT_HORIZON = 48）
+PROB_THRESHOLD = _EXEC.prob_threshold
+
+# SignalPanel に出すライブ特徴量（bar_features 列名から代表を抜粋）
+LIVE_FEATURE_KEYS = (SIGMA_FEATURE, "obi_l5", "rsi_14", "macd_hist", "spread_bps", "funding_rate")
+
+
+def _bars_held(entry_time, now, *, bar_seconds: int = BAR_SECONDS) -> int:
+    """エントリー発注時刻からの経過バー数（発注時刻近似・スキーマ変更なし）。"""
+    if entry_time is None:
+        return 0
+    secs = (now - entry_time).total_seconds()
+    return max(0, int(secs // bar_seconds))
+
+
+def _sigma_view(per_bar: Optional[float], horizon: int = HORIZON) -> dict:
+    """σ 表示: per-bar と ×√horizon。スケールは shared.volatility.scale_to_horizon のみ
+    （server 内で σ×√horizon を自前計算しない＝σ 単一定義の遵守。呼び出し側スケールの一例）。"""
+    if per_bar is None:
+        return {"perBar": None, "horizon": horizon, "scaled": None}
+    return {"perBar": per_bar, "horizon": horizon,
+            "scaled": volatility.scale_to_horizon(per_bar, horizon)}
+
+
+def build_snapshot(*, now, prediction, candles, barriers, feature_row,
+                   positions, sl_levels, entry_times) -> dict:
+    """取得済みデータを DashboardState 形へ（connected/latencyMs はクライアント側で付与）。
+
+    equity / winRate は当面 null（DB に永続化テーブルが無く winRate 定義が未確定。
+    UI 側でレイアウト枠は維持）。純粋な整形のみでロジックを持たない。
+    """
+    per_bar = prediction.get("sigma") if prediction else None
+
+    open_pnl = 0.0
+    if positions:
+        open_pnl = float(sum((p.get("unrealized_pnl") or 0.0) for p in positions))
+
+    pos_views = []
+    for p in positions:
+        sym = p.get("symbol")
+        pos_views.append({
+            **p,
+            "slLevel": sl_levels.get(sym),
+            "barsHeld": _bars_held(entry_times.get(sym), now),
+            "horizon": HORIZON,
+        })
+
+    features = []
+    if feature_row:
+        for k in LIVE_FEATURE_KEYS:
+            v = feature_row.get(k)
+            if v is not None:
+                features.append({"name": k, "value": float(v)})
+
+    return {
+        "updatedAt": now.isoformat(),
+        "metrics": {
+            "equity": None,        # DB に永続化ソース無し（別途方針決定）
+            "openPnl": open_pnl,
+            "winRate": None,       # 定義未確定（別途方針決定）
+            "sigma": _sigma_view(per_bar),
+        },
+        "chart": {"symbol": PRIMARY_SYMBOL, "candles": candles, "barriers": barriers},
+        "prediction": prediction,
+        "probThreshold": PROB_THRESHOLD,
+        "features": features,
+        "positions": pos_views,
+    }
 
 
 class StateProvider:
@@ -90,6 +171,81 @@ class DbStateProvider(StateProvider):
         )
         return [_jsonable(r) for r in rows]
 
+    # --- snapshot 用の細粒度クエリ（read-only） --- #
+    async def _latest_prediction(self, symbol: str) -> Optional[dict]:
+        row = await self.pool.fetchrow(
+            "SELECT * FROM model_predictions WHERE symbol = $1 ORDER BY time DESC LIMIT 1",
+            symbol,
+        )
+        return _jsonable(row) if row else None
+
+    async def _candles(self, symbol: str, limit: int) -> list[dict]:
+        """ohlcv_bars 直近 limit 本を昇順・エポック秒で返す（lightweight-charts 用）。"""
+        rows = await self.pool.fetch(
+            "SELECT time, open, high, low, close FROM ohlcv_bars "
+            "WHERE symbol = $1 ORDER BY time DESC LIMIT $2",
+            symbol, limit,
+        )
+        return [
+            {"time": int(r["time"].timestamp()), "open": r["open"],
+             "high": r["high"], "low": r["low"], "close": r["close"]}
+            for r in reversed(rows)
+        ]
+
+    async def _latest_order_price(self, symbol: str, intent: str) -> Optional[float]:
+        """銘柄×intent の最新ブラケット価格。stop_loss は待機ストップに price=triggerPx が
+        入る（即時成行クローズは price NULL なので除外）。entry/take_profit も同様に price。"""
+        row = await self.pool.fetchrow(
+            "SELECT price FROM orders WHERE symbol = $1 AND intent = $2 "
+            "AND price IS NOT NULL ORDER BY time DESC LIMIT 1",
+            symbol, intent,
+        )
+        return float(row["price"]) if row and row["price"] is not None else None
+
+    async def _entry_time(self, symbol: str):
+        """現建玉のオープン時刻近似 = 最新 entry 注文の発注時刻（スキーマ変更なし）。"""
+        row = await self.pool.fetchrow(
+            "SELECT time FROM orders WHERE symbol = $1 AND intent = 'entry' "
+            "ORDER BY time DESC LIMIT 1",
+            symbol,
+        )
+        return row["time"] if row else None
+
+    async def _latest_feature_row(self, symbol: str) -> Optional[dict]:
+        row = await self.pool.fetchrow(
+            "SELECT * FROM bar_features WHERE symbol = $1 ORDER BY time DESC LIMIT 1",
+            symbol,
+        )
+        return dict(row) if row else None
+
+    async def snapshot(self) -> dict:
+        """DashboardState 形の集約スナップショット（read-only）。整形は build_snapshot に委譲。"""
+        now = datetime.now(timezone.utc)
+        sym = PRIMARY_SYMBOL
+
+        prediction = await self._latest_prediction(sym)
+        candles = await self._candles(sym, CANDLE_LIMIT)
+        barriers = {
+            "entry": await self._latest_order_price(sym, "entry"),
+            "takeProfit": await self._latest_order_price(sym, "take_profit"),
+            "stopLoss": await self._latest_order_price(sym, "stop_loss"),
+        }
+        feature_row = await self._latest_feature_row(sym)
+        positions = await self.positions()
+
+        sl_levels: dict = {}
+        entry_times: dict = {}
+        for p in positions:
+            s = p["symbol"]
+            sl_levels[s] = await self._latest_order_price(s, "stop_loss")
+            entry_times[s] = await self._entry_time(s)
+
+        return build_snapshot(
+            now=now, prediction=prediction, candles=candles, barriers=barriers,
+            feature_row=feature_row, positions=positions,
+            sl_levels=sl_levels, entry_times=entry_times,
+        )
+
 
 def _register(app: FastAPI, ws_interval: float) -> None:
     @app.get("/health")
@@ -107,6 +263,10 @@ def _register(app: FastAPI, ws_interval: float) -> None:
     @app.get("/orders")
     async def orders(limit: int = 50):
         return await app.state.provider.orders(limit)
+
+    @app.get("/snapshot")
+    async def snapshot():
+        return await app.state.provider.snapshot()
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):

@@ -87,18 +87,23 @@ export interface ChartData {
 /**
  * σ 表示用。per-bar と horizon スケール後をどちらもデータ側が供給する。
  * UI は perBar → ×√horizon → scaled を「表示」するだけ（Math.sqrt しない）。
+ * 予測が無い間は perBar/scaled は null。
  */
 export interface SigmaView {
-  perBar: number;
+  perBar: number | null;
   horizon: number; // ラベル/モデルの horizon（=48）
-  scaled: number; // shared/volatility.py の scale_to_horizon 後
+  scaled: number | null; // shared/volatility.py の scale_to_horizon 後
 }
 
-/** ヘッダ/カードに出す集計メトリクス。 */
+/**
+ * ヘッダ/カードに出す集計メトリクス。
+ * equity / winRate は当面 null（DB 永続化ソース無し / winRate 定義未確定）。
+ * 表示は "—"（format.ts の null 安全整形）で、レイアウト枠は維持する。
+ */
 export interface Metrics {
-  equity: number;
-  openPnl: number;
-  winRate: number; // 0..1
+  equity: number | null;
+  openPnl: number | null;
+  winRate: number | null; // 0..1
   sigma: SigmaView;
 }
 
@@ -109,7 +114,7 @@ export interface DashboardState {
   updatedAt: string; // ISO8601
   metrics: Metrics;
   chart: ChartData; // 主表示銘柄のローソク足 + バリア（PriceChart）
-  prediction: Prediction; // 主表示銘柄の最新予測（SignalPanel）
+  prediction: Prediction | null; // 主表示銘柄の最新予測（無ければ null）
   probThreshold: number; // execution.py ExecConfig.prob_threshold（表示用）
   features: LiveFeature[];
   positions: PositionView[];

@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from "react";
 import ThemeToggle from "../theme/ThemeToggle";
-import { clockFromDate, signedUsd, usd } from "../format";
+import { clockFromDate, signColor, signedUsd, usd } from "../format";
 
 /** 1 秒ごとに更新するローカル時計。 */
 function useNow(): Date {
@@ -38,8 +38,8 @@ function Stat({ label, children }: { label: string; children: React.ReactNode })
 export interface HeaderProps {
   connected: boolean;
   latencyMs: number | null;
-  equity: number;
-  openPnl: number;
+  equity: number | null;
+  openPnl: number | null;
 }
 
 export default function Header({ connected, latencyMs, equity, openPnl }: HeaderProps) {
@@ -94,9 +94,7 @@ export default function Header({ connected, latencyMs, equity, openPnl }: Header
         <Stat label="equity">{usd(equity)}</Stat>
 
         <Stat label="open pnl">
-          <span style={{ color: openPnl >= 0 ? "var(--ax-positive)" : "var(--ax-negative)" }}>
-            {signedUsd(openPnl)}
-          </span>
+          <span style={{ color: signColor(openPnl) }}>{signedUsd(openPnl)}</span>
         </Stat>
 
         <ThemeToggle />
