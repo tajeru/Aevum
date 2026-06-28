@@ -166,3 +166,42 @@ def test_make_folds_no_index_leakage():
     folds = make_folds(feats, times, events, seq_len=seq_len, n_splits=2, embargo_bars=16)
     for fold in folds:
         assert len(set(fold.train_idx) & set(fold.test_idx)) == 0
+
+
+def test_make_folds_normalizer_fits_train_period_only():
+    # 正規化リーク防止: 各 fold の正規化統計は「test_start - embargo より前のバー」だけで
+    # fit され、test 期間バーは混入しないこと。時間ドリフトを入れ、test を含めると統計が
+    # 変わる状況で「train 期間のみ再計算」と一致・「全期間 fit」と不一致を確認する。
+    n, seq_len, embargo_bars = 400, 16, 16
+    rng = np.random.default_rng(1)
+    feats, times, events = {}, {}, {}
+    for s in ("BTC", "ETH"):
+        F = rng.normal(0.0, 1.0, (n, N_FEATURES)) + np.linspace(0.0, 10.0, n)[:, None]  # 時間ドリフト
+        t = _times(n)
+        e = np.arange(seq_len, n - 50, 4)
+        events[s] = {
+            "e_idx": e, "t1": t[e] + 48 * FIVE_MIN,
+            "label": rng.integers(-1, 2, e.size), "weight": np.full(e.size, 1.0),
+        }
+        feats[s], times[s] = F, t
+
+    samples = build_samples(feats, times, events, seq_len=seq_len)
+    folds = make_folds(feats, times, events, seq_len=seq_len, n_splits=2, embargo_bars=embargo_bars)
+    assert len(folds) >= 1
+    embargo = np.timedelta64(embargo_bars * 5, "m")
+
+    for fold in folds:
+        cutoff = samples["t0"][fold.test_idx].min() - embargo
+        rows = []
+        for s, F in feats.items():
+            tt = np.asarray(times[s], dtype="datetime64[ns]")
+            r = np.asarray(F, dtype=np.float64)[tt < cutoff]
+            rows.append(r[np.isfinite(r).all(axis=1)])
+        indep = ZScoreClipNormalizer().fit(np.concatenate(rows, axis=0))
+        # train 期間のみで再計算した統計と一致
+        np.testing.assert_allclose(fold.normalizer.mean_, indep.mean_)
+        np.testing.assert_allclose(fold.normalizer.std_, indep.std_)
+        # 全期間 fit とは異なる = test 期間バーが fit に混入していない証拠
+        full = ZScoreClipNormalizer().fit(
+            np.concatenate([np.asarray(F, dtype=np.float64) for F in feats.values()], axis=0))
+        assert not np.allclose(fold.normalizer.mean_, full.mean_)
