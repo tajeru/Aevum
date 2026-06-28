@@ -120,7 +120,6 @@ def triple_barrier_labels(
     sigma = np.asarray(sigma, dtype=np.float64)
     horizon = int(horizon)
     n = close.size
-    sqrt_h = math.sqrt(horizon)
 
     t0s: list[int] = []
     labels: list[int] = []
@@ -139,7 +138,7 @@ def triple_barrier_labels(
         if not math.isfinite(s) or s <= 0.0:
             continue
 
-        scaled = s * sqrt_h
+        scaled = volatility.scale_to_horizon(s, horizon)  # σ→保有期間スケールは唯一定義を使う
         w_up = pt_mult * scaled
         w_dn = sl_mult * scaled
         pt_level = close[t0] * math.exp(w_up)
@@ -212,7 +211,9 @@ def average_uniqueness_weights(t0_idx: Any, touch_idx: Any, n: int) -> np.ndarra
     for i in range(m):
         a, b = int(t0[i]), int(tt[i])
         w[i] = (prefix[b + 1] - prefix[a]) / (b - a + 1)
-    return w
+    # 平均一意性は定義上 (0, 1]。prefix-sum 差分の浮動小数点丸めで 1+ε(≈1e-15) に
+    # なり得るため 1.0 にクランプ（数学的に厳密。下限は concurrency>=1 で保証）。
+    return np.minimum(w, 1.0)
 
 
 # --------------------------------------------------------------------------- #

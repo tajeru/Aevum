@@ -113,6 +113,19 @@ def test_tbl_skips_nan_sigma():
     assert out["t0_idx"].size == 0
 
 
+def test_tbl_barrier_levels_use_scale_to_horizon():
+    # バリア幅の σ→保有期間スケールは shared.volatility.scale_to_horizon を経由すること
+    # （式の二重実装禁止）。非対称倍率で式を一意に固定する。
+    from shared import volatility
+
+    high, low, close, sig = _setup(sigma=0.01)
+    out = triple_barrier_labels(high, low, close, sig, [1], horizon=2,
+                                pt_mult=1.3, sl_mult=0.7)
+    scaled = volatility.scale_to_horizon(0.01, 2)
+    assert out["pt_level"][0] == pytest.approx(100.0 * math.exp(1.3 * scaled))
+    assert out["sl_level"][0] == pytest.approx(100.0 * math.exp(-0.7 * scaled))
+
+
 # --------------------------------------------------------------------------- #
 # average_uniqueness_weights
 # --------------------------------------------------------------------------- #
@@ -132,6 +145,16 @@ def test_uniqueness_overlapping_hand_computed():
 
 def test_uniqueness_empty():
     assert average_uniqueness_weights([], [], n=10).size == 0
+
+
+def test_uniqueness_clamped_to_one_under_fp_rounding():
+    # prefix-sum 差分の浮動小数点丸めで重みが 1.0 を僅かに超える決定的配置
+    # （クランプ前は max≈1.0000000000000009）。一意性は定義上 <= 1。
+    t0 = [6, 13, 15, 16, 26]
+    tt = [16, 14, 25, 22, 27]
+    w = average_uniqueness_weights(t0, tt, n=29)
+    assert np.all(w <= 1.0)
+    assert np.all(w > 0.0)
 
 
 # --------------------------------------------------------------------------- #
