@@ -184,6 +184,94 @@ def test_compute_features_bulk_equals_incremental():
     )
 
 
+def _book_for_bars(bars, start_idx=0, snaps_per_bar=3, seed=7):
+    # bars の time レンジに沿って、1バーあたり snaps_per_bar 個の板スナップショットを生成。
+    # spread_z_60/spread_vol_30 が縮退しないよう、バーごとに最良気配と spread を変動させる。
+    # start_idx > 0 にすると板開始を遅らせ、ライブの疎な開始（板が candle より遅く始まる）を模す。
+    rng = np.random.default_rng(seed)
+    times = bars["time"].to_list()
+    rows = []
+    for i in range(start_idx, len(times)):
+        t0 = times[i]
+        mid = 100.0 + 5.0 * math.sin(i / 11.0)            # バー間で中値が動く
+        for j in range(snaps_per_bar):
+            # バー内 snaps_per_bar 個を等間隔に配置（最後がバー終端を超えないよう 300/snaps 秒刻み）
+            t = t0 + timedelta(seconds=int(j * (300 // snaps_per_bar)))
+            half_spread = 0.05 + 0.04 * abs(math.sin(i / 7.0 + 0.5 * j)) + 0.01 * rng.standard_normal()
+            half_spread = max(half_spread, 0.005)
+            b0 = mid - half_spread
+            a0 = mid + half_spread
+            bsz0 = 5.0 + 4.0 * abs(rng.standard_normal())
+            asz0 = 5.0 + 4.0 * abs(rng.standard_normal())
+            rows.append(_book_row(t, b0, a0, bsz0, asz0))
+    return pl.DataFrame(rows)
+
+
+def _funding_for_bars(bars, start_idx=0, every=1, seed=9):
+    # バー時刻（または every バーごと）に funding_oi 行を生成。
+    # funding_z_60/oi_change が縮退しないよう rate と open_interest をバー間で変動させる。
+    rng = np.random.default_rng(seed)
+    times = bars["time"].to_list()
+    rows = []
+    oi = 1.0e7
+    for i in range(start_idx, len(times)):
+        if (i - start_idx) % every != 0:
+            continue
+        rate = 1.0e-4 * math.sin(i / 13.0) + 2.0e-5 * rng.standard_normal()
+        oi *= math.exp(0.01 * rng.standard_normal())
+        rows.append({"time": times[i], "funding_rate": float(rate), "open_interest": float(oi)})
+    return pl.DataFrame(rows)
+
+
+def test_book_funding_bulk_equals_incremental():
+    # 板/funding 由来の履歴依存特徴量（spread_z_60, spread_vol_30, funding_z_60, oi_change）が
+    # バルク計算とローリング窓（末尾 WARMUP_BARS+K）で末尾 K 行一致することを証明する（軸A）。
+    # 既存の bulk==incremental テストは book/funding を空 dict で渡すため全 NULL になり、これらは
+    # 未検証だった。ここでは実データ相当の板/funding を合成して非縮退・非空虚な一致を確認する。
+    K = 128
+    N = 2500
+    bars = {"BTC": _bars(n=N, seed=0), "ETH": _bars(n=N, seed=1)}
+    # 板はバー600から開始（ライブの疎な開始を模す）。tail 開始(=N-(WARMUP_BARS+K)=1372)より十分前なので、
+    # 比較対象の末尾Kでは bulk/incremental 双方とも板が密に存在し、有限要素履歴が一致する。
+    book = {
+        "BTC": _book_for_bars(bars["BTC"], start_idx=600, snaps_per_bar=3, seed=7),
+        "ETH": _book_for_bars(bars["ETH"], start_idx=600, snaps_per_bar=2, seed=8),
+    }
+    funding = {
+        "BTC": _funding_for_bars(bars["BTC"], start_idx=300, every=1, seed=9),
+        "ETH": _funding_for_bars(bars["ETH"], start_idx=300, every=1, seed=10),
+    }
+
+    bulk = compute_features(bars, book, funding)["BTC"]
+
+    tail_bars = {s: df.tail(WARMUP_BARS + K) for s, df in bars.items()}
+    tmin = tail_bars["BTC"]["time"].min()
+    # 板/funding も tail の最小時刻以降だけを渡す（ライブのバッファ相当）。
+    tail_book = {s: df.filter(pl.col("time") >= tmin) for s, df in book.items()}
+    tail_funding = {s: df.filter(pl.col("time") >= tmin) for s, df in funding.items()}
+    inc = compute_features(tail_bars, tail_book, tail_funding)["BTC"]
+
+    bulk_tail = bulk.select(FEATURE_NAMES).to_numpy()[-K:]
+    inc_tail = inc.select(FEATURE_NAMES).to_numpy()[-K:]
+
+    # 非空虚性: 履歴依存の板/funding 特徴量が末尾Kで十分な有限値を持つこと（両側 NULL の空虚 PASS を防ぐ）。
+    hist_feats = ["spread_z_60", "spread_vol_30", "funding_z_60", "oi_change"]
+    finite_counts = {}
+    for name in hist_feats:
+        idx = FEATURE_NAMES.index(name)
+        nb = int(np.isfinite(bulk_tail[:, idx]).sum())
+        ni = int(np.isfinite(inc_tail[:, idx]).sum())
+        finite_counts[name] = (nb, ni)
+        assert nb >= K // 3, f"{name}: bulk finite {nb} < {K // 3} (degenerate/all-NaN)"
+        assert ni >= K // 3, f"{name}: incremental finite {ni} < {K // 3} (degenerate/all-NaN)"
+
+    print("finite_counts (bulk, inc):", finite_counts)
+
+    np.testing.assert_allclose(
+        inc_tail, bulk_tail, rtol=1e-6, atol=1e-7, equal_nan=True,
+    )
+
+
 def test_insert_sql_arity():
     nph = max(int(m) for m in re.findall(r"\$(\d+)", BAR_FEATURES_INSERT_SQL))
     assert nph == 2 + len(FEATURE_NAMES) == 60
