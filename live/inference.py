@@ -147,9 +147,11 @@ async def store_prediction(conn, rec: dict) -> None:
 async def _fetch_recent(conn, symbol, predictor):
     """直近 WARMUP_BARS + seq_len バーぶんのバッファを取得（bars/book/funding）。
 
-    板は計算負荷が大きいが、窓(seq_len)+spread rolling(60) ぶんしか使われないため
-    直近 seq_len+64 本に限定する（古い板は窓に入らない）。bars/funding は履歴依存の
-    特徴量があるため WARMUP 全体を渡す。
+    板も funding/bars と同じく WARMUP 全体（bar_start 以降）を渡す。板由来の履歴依存特徴
+    （spread_z_60 は rolling 60、spread_vol_30 は rolling 30）は board-present バー上の
+    ローリングのため、板が疎（再接続・停止ギャップ）だと直近 seq_len+64 本では 60 本の
+    present バーを満たせず、モデル窓先頭で spread_z_60 がバルク（学習時）と乖離して NaN 化する
+    （定量検証済み・片方向 bulk有限/live NaN）。funding と同方針に揃え train/live を構造的に一致させる。
     """
     n = WARMUP_BARS + predictor.seq_len
     bars = (await fetch_bars(conn, symbol)).tail(n)
@@ -157,10 +159,8 @@ async def _fetch_recent(conn, symbol, predictor):
     funding = await fetch_funding(conn, symbol)
     if bars.height:
         bar_start = bars["time"][0]
-        book_bars = min(bars.height, predictor.seq_len + 64)
-        book_start = bars["time"][bars.height - book_bars]
         if book.height:
-            book = book.filter(book["time"] >= book_start)
+            book = book.filter(book["time"] >= bar_start)
         if funding.height:
             funding = funding.filter(funding["time"] >= bar_start)
     return bars, book, funding
