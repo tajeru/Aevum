@@ -40,6 +40,20 @@ class FakeProvider(StateProvider):
         return [{"symbol": "BTC", "side": "buy", "intent": "entry",
                  "status": "open", "risk_passed": True}][:limit]
 
+    async def ingestion_status(self):
+        stats = {
+            "last_write_at": "2026-07-01T00:00:00+00:00",
+            "seconds_since_last_write": 30,
+            "rows_last_1h": 12,
+            "rows_total": 1000,
+            "oldest_at": "2026-06-01T00:00:00+00:00",
+            "span_seconds": 2592000,
+        }
+        tables = {}
+        for tbl in ("ohlcv_bars", "orderbook_snapshots", "funding_oi"):
+            tables[tbl] = {"BTC": dict(stats), "ETH": dict(stats)}
+        return {"tables": tables}
+
 
 @pytest.fixture()
 def client():
@@ -144,3 +158,22 @@ def test_snapshot_endpoint(client):
     assert r.status_code == 200
     body = r.json()
     assert "predictions" in body and "positions" in body
+
+
+def test_monitoring_ingestion_shape(client):
+    r = client.get("/monitoring/ingestion")
+    assert r.status_code == 200
+    body = r.json()
+    assert "tables" in body
+    for tbl in ("ohlcv_bars", "orderbook_snapshots", "funding_oi"):
+        assert tbl in body["tables"], f"missing table: {tbl}"
+        for sym in ("BTC", "ETH"):
+            s = body["tables"][tbl][sym]
+            assert "last_write_at" in s
+            assert "seconds_since_last_write" in s
+            assert "rows_last_1h" in s
+            assert "rows_total" in s
+            assert "oldest_at" in s
+            assert "span_seconds" in s
+            assert s["rows_total"] == 1000
+            assert s["span_seconds"] == 2592000

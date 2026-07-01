@@ -55,6 +55,42 @@ PROB_THRESHOLD = _EXEC.prob_threshold
 # SignalPanel に出すライブ特徴量（bar_features 列名から代表を抜粋）
 LIVE_FEATURE_KEYS = (SIGMA_FEATURE, "obi_l5", "rsi_14", "macd_hist", "spread_bps", "funding_rate")
 
+# --------------------------------------------------------------------------- #
+# Ingestion monitoring constants (cadence-based stale thresholds)
+#   ohlcv_bars          : 5-min candle bars -> new row every ~300s per symbol
+#   orderbook_snapshots : real-time l2Book  -> should refresh in seconds
+#   funding_oi          : activeAssetCtx    -> ~60s cadence
+# --------------------------------------------------------------------------- #
+_MONITORING_TABLES: tuple[str, ...] = ("ohlcv_bars", "orderbook_snapshots", "funding_oi")
+
+MONITORING_STALE_SECONDS: dict[str, int] = {
+    "ohlcv_bars": 7 * 60,        # 7 min  (cadence: 5 min)
+    "orderbook_snapshots": 60,   # 60 s   (cadence: real-time)
+    "funding_oi": 3 * 60,        # 3 min  (cadence: ~1 min)
+}
+
+_MONITORING_STATS_SQL = """\
+SELECT
+    symbol,
+    MAX(time)                                                          AS last_write_at,
+    EXTRACT(EPOCH FROM (NOW() - MAX(time)))::BIGINT                   AS seconds_since_last_write,
+    COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '1 hour')          AS rows_last_1h,
+    COUNT(*)                                                           AS rows_total,
+    MIN(time)                                                          AS oldest_at,
+    EXTRACT(EPOCH FROM (MAX(time) - MIN(time)))::BIGINT               AS span_seconds
+FROM {table}
+GROUP BY symbol
+"""
+
+_MONITORING_EMPTY: dict = {
+    "last_write_at": None,
+    "seconds_since_last_write": None,
+    "rows_last_1h": 0,
+    "rows_total": 0,
+    "oldest_at": None,
+    "span_seconds": None,
+}
+
 
 def _bars_held(entry_time, now, *, bar_seconds: int = BAR_SECONDS) -> int:
     """エントリー発注時刻からの経過バー数（発注時刻近似・スキーマ変更なし）。"""
@@ -139,6 +175,9 @@ class StateProvider:
             "predictions": await self.predictions(limit=10),
             "positions": await self.positions(),
         }
+
+    async def ingestion_status(self) -> dict:
+        raise NotImplementedError
 
 
 class DbStateProvider(StateProvider):
@@ -246,6 +285,18 @@ class DbStateProvider(StateProvider):
             sl_levels=sl_levels, entry_times=entry_times,
         )
 
+    async def ingestion_status(self) -> dict:
+        """Return freshness / throughput / accumulation stats for the 3 raw ingestion tables."""
+        tables: dict = {}
+        for table in _MONITORING_TABLES:
+            rows = await self.pool.fetch(_MONITORING_STATS_SQL.format(table=table))
+            by_sym = {r["symbol"]: _jsonable(r) for r in rows}
+            tables[table] = {
+                sym: by_sym.get(sym, dict(_MONITORING_EMPTY))
+                for sym in ("BTC", "ETH")
+            }
+        return {"tables": tables}
+
 
 def _register(app: FastAPI, ws_interval: float) -> None:
     @app.get("/health")
@@ -267,6 +318,10 @@ def _register(app: FastAPI, ws_interval: float) -> None:
     @app.get("/snapshot")
     async def snapshot():
         return await app.state.provider.snapshot()
+
+    @app.get("/monitoring/ingestion")
+    async def monitoring_ingestion():
+        return await app.state.provider.ingestion_status()
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):
