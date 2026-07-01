@@ -18,9 +18,43 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Built React UI output directory (ui/dist).
+# Used by create_db_app to serve the SPA alongside the API.
+_UI_DIST = Path(__file__).parent.parent / "ui" / "dist"
+
+
+class _ApiPrefixMiddleware(BaseHTTPMiddleware):
+    """Strip /api prefix so the built UI's /api/* requests reach bare FastAPI routes."""
+
+    async def dispatch(self, request, call_next):
+        path = request.scope.get("path", "")
+        if path.startswith("/api/"):
+            request.scope["path"] = path[4:]
+            request.scope["raw_path"] = request.scope["path"].encode()
+        return await call_next(request)
+
+
+def _mount_ui(app: FastAPI) -> None:
+    """Mount built React SPA from ui/dist (no-op when dist is absent)."""
+    if not _UI_DIST.exists():
+        return
+    assets = _UI_DIST / "assets"
+    if assets.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets)), name="ui-assets")
+
+    index = _UI_DIST / "index.html"
+    if index.exists():
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def _spa_fallback(full_path: str):  # noqa: ARG001
+            return FileResponse(str(index))
 
 from live.execution import ExecConfig  # prob_threshold / horizon の唯一ソース
 from shared import volatility  # σ スケールの唯一定義（scale_to_horizon）
@@ -343,7 +377,7 @@ def create_app(provider: StateProvider, *, ws_interval: float = 1.0) -> FastAPI:
 
 
 def create_db_app(dsn: Optional[str] = None, *, ws_interval: float = 1.0) -> FastAPI:
-    """本番 app。lifespan で asyncpg プール＋DbStateProvider を用意。"""
+    """Production app: asyncpg pool + DbStateProvider + built UI serving."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -359,8 +393,17 @@ def create_db_app(dsn: Optional[str] = None, *, ws_interval: float = 1.0) -> Fas
             await pool.close()
 
     app = FastAPI(title="Aevum API", lifespan=lifespan)
+    # Strip /api prefix so built UI requests (/api/health etc.) reach bare routes.
+    app.add_middleware(_ApiPrefixMiddleware)
     _register(app, ws_interval)
+    # Serve React SPA from ui/dist (no-op when dist absent).
+    _mount_ui(app)
     return app
+
+
+# Module-level app for: uvicorn api.server:app
+# DSN is read from AEVUM_DB_DSN env var (set to Pi DB or localhost as needed).
+app = create_db_app()
 
 
 def main() -> None:
