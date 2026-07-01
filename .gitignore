@@ -38,6 +38,7 @@ secrets.*
 # --- Local DB files ---
 *.sqlite
 *.db
+*.dump
 
 # --- Node / UI (ui/) ---
 node_modules/
